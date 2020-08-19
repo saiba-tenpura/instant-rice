@@ -1,9 +1,11 @@
 amd-ucode
 awesome
+dhcpcd
 git
 neovim
+netctl
 pamixer
-picoma
+picom
 pulseaudio
 xf86-video-amdgpu
 xorg-server

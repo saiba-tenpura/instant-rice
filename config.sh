@@ -5,16 +5,16 @@ device="/dev/nvme1n1"
 device_root="/dev/nvme1n1p3"
 
 # Packages to install
-pkgs="$(<"pkgs.txt")"
+pkgs="pkgs.txt"
 
 # AUR packages to install
-aurs="$(<"aurs.txt")"
+aurs="aurs.txt"
 
 # Country for mirrorlist retrieval
 country="DE"
 
 # Sudo user of the system
-user="yagiza"
+user="tenpura"
 
 # Hostname of the system
 hostname="artheus"

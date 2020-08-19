@@ -42,7 +42,7 @@ info() {
 
 # Cleanup
 cleanup() {
-    rm /mnt/root/{config,install}.sh 2>/dev/null
+    rm /mnt/root/{config.sh,install.sh,aurs.txt,pkgs.txt} 2>/dev/null
 }
 
 # Configure env
@@ -50,17 +50,13 @@ setup_chroot() {
     # Usage: setup_chroot
     local mirrorlist pac_conf
 
-    # Enable 32-Bit support
-    pac_conf=$(<"/etc/pacman.conf")
-    printf "${pac_conf/\#\[multilib]$'\n'\#Include/[multilib]$'\n'Include}" > /etc/pacman.conf
-
     # Setup mirrorlist
     mirrorlist=$(curl -s "https://www.archlinux.org/mirrorlist/?country=${country}&protocol=https&use_mirro_status=on")
     printf "${mirrorlist//\#Server/Server}" > /etc/pacman.d/mirrorlist
     pacman -Sy >/dev/null 2>&1
 
     # Install base environment
-    pacstrap /mnt base base-devel linux linux-firmware $pkgs > /dev/null 2>&1
+    pacstrap /mnt base base-devel linux linux-firmware $packages #> /dev/null 2>&1
 
     # Generate fstab
     genfstab -U /mnt >> /mnt/etc/fstab
@@ -101,12 +97,21 @@ cfg_kbd() {
 	EndSection
 	EOF
 }
-# Configure hostname, hosts, networkmanager
+
+# Configure hostname, hosts, dhcpcd
 cfg_network() {
     # Usage: cfg_network hostname
     printf "${1}\n" > /etc/hostname
     printf "%-12s localhost\n" "127.0.0.1" "::1" > /etc/hosts
-    systemctl enable NetworkManager.service > /dev/null
+    systemctl enable dhcpcd.service > /dev/null
+}
+
+# Add 32-bit packages
+cfg_mirror() {
+    # Enable 32-Bit support
+    pac_conf=$(<"/etc/pacman.conf")
+    printf "${pac_conf/\#\[multilib]$'\n'\#Include/[multilib]$'\n'Include}" > /etc/pacman.conf
+    pacman -Sy >/dev/null 2>&1
 }
 
 # Add user & autologin
@@ -146,7 +151,7 @@ cfg_dotfiles() {
 # AMD gaming configurations
 cfg_amd_gaming() {
     # Install Drivers
-    pacman -S lib32-mesa vulkan-radeon lib32-vulkan-radeon vulkan-icd-loader lib32-vulkan-icd-loader -y
+    pacman -Sy --noconfirm lib32-mesa vulkan-radeon lib32-vulkan-radeon vulkan-icd-loader lib32-vulkan-icd-loader
 
     # Enable ACO
     printf "RADV_PERFTEST=aco" > /etc/environment
@@ -172,17 +177,18 @@ install_refind() {
     # Usage: install_refind device
     local uuid
 
+    pacman -Sy --noconfirm refind > /dev/null 2>&1
     refind-install
-    uuid=$(lsblk -no UUID "${1}3")
+    uuid=$(lsblk -dno UUID "${1}")
 
     cat <<-EOF > /boot/EFI/refind/refind.conf
 	extra_kernel_version_strings linux
 
 	menuentry "Arch Linux" {
-	    icon /EFI/refind/icons/os_arch.png
+	    icon /EFI/refind/theme/icons/128-48/os_arch.png
 	    loader /vmlinuz-linux
 	    initrd /initramfs-linux.img
-	    options "root=PARTUUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img"
+	    options "root=UUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img"
 	    submentry "Boot using fallback initramfs" {
 	        initrd /initramfs-linux-fallback.img
 	    }
@@ -190,22 +196,29 @@ install_refind() {
 	        add_options "systemd.unit=multi-user.target"
 	    }
 	}
+
+	include refind-theme-regular/theme.conf
 	EOF
 
     cat <<-EOF > /boot/refind_linux.conf
-	"Boot using default options"    "root=PARTUUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img initrd=/initramfs-%v.img"
-	"Boot using fallback initramfs" "root=PARTUUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v-fallback.img"
-	"Boot to terminal               "root=PARTUUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v.img systemd.unit=multi-user.target"
+	"Boot using default options"    "root=UUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img initrd=/initramfs-%v.img"
+	"Boot using fallback initramfs" "root=UUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v-fallback.img"
+	"Boot to terminal               "root=UUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v.img systemd.unit=multi-user.target"
 	EOF
+
+    # Install refind theme
+    git clone https://github.com/bobafetthotmail/refind-theme-regular.git /boot/EFI/refind/
+    rm -rf /boot/EFI/refind/refind-theme-regular/{src,.git,install.sh}
 }
 
 # Install grub as bootloader
 install_grub() {
     # Usage: install_grub device
     if [ -d /sys/firmware/efi ]; then
-        pacman --noconfirm -S efibootmgr > /dev/null 2>&1
+        pacman -Sy --noconfirm grub efibootmgr > /dev/null 2>&1
         grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
     else
+	pacman -Sy --noconfirm grub > /dev/null 2>&1
         grub-install --target=i386-pc "${1}"
     fi
 
@@ -218,9 +231,10 @@ configure() {
     cfg_locale
     cfg_kbd
     cfg_network "${hostname}"
+    cfg_mirror
     cfg_user "${user}"
     cfg_dotfiles "${user}" "${dotfiles}"
-    install_aur "${user}" "${aurs}"
+    install_aur "${user}" "${aur_packages}"
     cfg_sudo "${user}"
     cfg_amd_gaming
     install_refind "${device_root}"
@@ -235,26 +249,30 @@ main() {
     trap cleanup EXIT INT
 
     # Check for prerequisits
-    info "\nChecking requirements:(1/3)"
+    info "Checking requirements:(1/3)"
     check_requirements
-
-    # Set path to script
-    work_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
 
     info "Setting up mirrors & installing packages:(2/3)"
     setup_chroot
 
     info "Performing system configuration:(2/3)"
-    cp "${work_dir}/{config,install}.sh" /mnt/root/
+    mkdir -p /mnt/root
+    cp ${work_dir}/{config.sh,install.sh,aurs.txt,pkgs.txt} /mnt/root/
     arch-chroot /mnt /root/install.sh -c
-    rm /mnt/root/{config,install}.sh
 
     printf "\e[92mInstallation process is done:\e[m Please set passwords for root & ${user}.\n" >&2
 
     exit 0
 }
 
-source config.sh
+# Set path to script
+work_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
+
+# Load configuration
+source ${work_dir}/config.sh
+packages="$(<"${work_dir}/${pkgs}")"
+aur_packages="$(<"${work_dir}/${aurs}")"
+
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)
