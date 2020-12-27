@@ -19,7 +19,6 @@ check_requirements() {
     local p progs
     progs="arch-chroot curl genfstab grep pacman pacstrap"
     [ $(id -u) = 0 ] || error "Script must be run as root!"
-    [ -b "${device}" ] || error "${dev} isn't a block device!"
 
     # Check required programs
     for p in $progs; do
@@ -51,12 +50,12 @@ setup_chroot() {
     local mirrorlist pac_conf
 
     # Setup mirrorlist
-    mirrorlist=$(curl -s "https://www.archlinux.org/mirrorlist/?country=${country}&protocol=https&use_mirro_status=on")
+    mirrorlist=$(curl -s "https://archlinux.org/mirrorlist/?country=${country}&protocol=https&use_mirro_status=on")
     printf "${mirrorlist//\#Server/Server}" > /etc/pacman.d/mirrorlist
     pacman -Sy >/dev/null 2>&1
 
     # Install base environment
-    pacstrap /mnt base base-devel linux linux-firmware $packages #> /dev/null 2>&1
+    pacstrap /mnt base base-devel linux linux-firmware $pkgs #> /dev/null 2>&1
 
     # Generate fstab
     genfstab -U /mnt >> /mnt/etc/fstab
@@ -172,73 +171,21 @@ install_aur() {
 	EOF
 }
 
-# Install rEFInd as bootloader
-install_refind() {
-    # Usage: install_refind device
-    local uuid
-
-    pacman -Sy --noconfirm refind > /dev/null 2>&1
-    refind-install
-    uuid=$(lsblk -dno UUID "${1}")
-
-    cat <<-EOF > /boot/EFI/refind/refind.conf
-	extra_kernel_version_strings linux
-
-	menuentry "Arch Linux" {
-	    icon /EFI/refind/theme/icons/128-48/os_arch.png
-	    loader /vmlinuz-linux
-	    initrd /initramfs-linux.img
-	    options "root=UUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img"
-	    submentry "Boot using fallback initramfs" {
-	        initrd /initramfs-linux-fallback.img
-	    }
-	    submenuentry "Boot to terminal" {
-	        add_options "systemd.unit=multi-user.target"
-	    }
-	}
-
-	include refind-theme-regular/theme.conf
-	EOF
-
-    cat <<-EOF > /boot/refind_linux.conf
-	"Boot using default options"    "root=UUID=${uuid} rw add_efi_memmap initrd=amd-ucode.img initrd=/initramfs-%v.img"
-	"Boot using fallback initramfs" "root=UUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v-fallback.img"
-	"Boot to terminal               "root=UUID=${uuid} rw add_efi_memmap initrd=/initramfs-%v.img systemd.unit=multi-user.target"
-	EOF
-
-    # Install refind theme
-    git clone https://github.com/bobafetthotmail/refind-theme-regular.git /boot/EFI/refind/
-    rm -rf /boot/EFI/refind/refind-theme-regular/{src,.git,install.sh}
-}
-
-# Install grub as bootloader
-install_grub() {
-    # Usage: install_grub device
-    if [ -d /sys/firmware/efi ]; then
-        pacman -Sy --noconfirm grub efibootmgr > /dev/null 2>&1
-        grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
-    else
-	pacman -Sy --noconfirm grub > /dev/null 2>&1
-        grub-install --target=i386-pc "${1}"
-    fi
-
-    grub-mkconfig -o /boot/grub/grub.cfg
-}
-
 # Configure inside of chroot via library
 configure() {
     cfg_time "${time_zone}"
     cfg_locale
-    cfg_kbd
+    if [ "${country}" = "DE" ]; then
+        cfg_kbd
+    fi
+
     cfg_network "${hostname}"
     cfg_mirror
     cfg_user "${user}"
     cfg_dotfiles "${user}" "${dotfiles}"
-    install_aur "${user}" "${aur_packages}"
+    install_aur "${user}" "${aur_pkgs}"
     cfg_sudo "${user}"
     cfg_amd_gaming
-    install_refind "${device_root}"
-    #install_grub "${device}"
 
     exit 0
 }
@@ -260,7 +207,7 @@ main() {
     cp ${work_dir}/{config.sh,install.sh,aurs.txt,pkgs.txt} /mnt/root/
     arch-chroot /mnt /root/install.sh -c
 
-    printf "\e[92mInstallation process is done:\e[m Please set passwords for root & ${user}.\n" >&2
+    printf "\e[92mThe basic installation process is done:\e[m\nPlease continue with the following:\n1. Install a bootloader of your choice.\n2. Set the passwords for root & ${user}.\n" >&2
 
     exit 0
 }
@@ -270,8 +217,8 @@ work_dir="$(cd "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
 
 # Load configuration
 source ${work_dir}/config.sh
-packages="$(<"${work_dir}/${pkgs}")"
-aur_packages="$(<"${work_dir}/${aurs}")"
+pkgs="$(<"${work_dir}/pkgs.txt")"
+aur_pkgs="$(<"${work_dir}/aurs.txt")"
 
 while [ $# -gt 0 ]; do
     case "$1" in

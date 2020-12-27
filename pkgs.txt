@@ -1,9 +1,9 @@
 amd-ucode
-awesome
 dhcpcd
 git
 neovim
 netctl
+openbox
 pamixer
 picom
 pulseaudio
